@@ -1,46 +1,97 @@
 const express = require('express');
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 const router = express.Router();
+
 const DATA_PATH = path.join(__dirname, '../../../data/items.json');
 
-// Utility to read data (intentionally sync to highlight blocking issue)
-function readData() {
-  const raw = fs.readFileSync(DATA_PATH);
+/**
+ * Load the array of items from disk.
+ * @returns {Promise<Array>}
+ */
+async function readData() {
+  const raw = await fs.readFile(DATA_PATH, 'utf-8');
   return JSON.parse(raw);
 }
 
+/**
+ * Persist the array of items to disk.
+ * @param {Array} data
+ */
+async function writeData(data) {
+  const json = JSON.stringify(data, null, 2);
+  await fs.writeFile(DATA_PATH, json, 'utf-8');
+}
+
+/**
+ * Validate the incoming item payload.
+ * Returns an array of error messages; empty if valid.
+ * @param {Object} item
+ * @returns {string[]}
+ */
+function validateItemPayload(item) {
+  const errors = [];
+  if (typeof item !== 'object' || item === null) {
+    errors.push('Payload must be a JSON object');
+    return errors;
+  }
+  if (!item.name || typeof item.name !== 'string') {
+    errors.push('`name` is required and must be a non-empty string');
+  }
+  if (!item.category || typeof item.category !== 'string') {
+    errors.push('`category` is required and must be a non-empty string');
+  }
+  if (item.price == null || typeof item.price !== 'number' || isNaN(item.price)) {
+    errors.push('`price` is required and must be a number');
+  } else if (item.price < 0) {
+    errors.push('`price` cannot be negative');
+  }
+  return errors;
+}
+
 // GET /api/items
-router.get('/', (req, res, next) => {
+// Supports optional `q` (substring search, case-insensitive),
+// and pagination via `page` and `limit`.
+router.get('/', async (req, res, next) => {
   try {
-    const data = readData();
-    const { limit, q } = req.query;
-    let results = data;
+    const data = await readData();
+    let results = Array.isArray(data) ? data : [];
 
-    if (q) {
-      // Simple substring search (sub‑optimal)
-      results = results.filter(item => item.name.toLowerCase().includes(q.toLowerCase()));
+    // Search
+    if (req.query.q) {
+      const term = req.query.q.toLowerCase();
+      results = results.filter(i =>
+        typeof i.name === 'string' && i.name.toLowerCase().includes(term)
+      );
     }
 
-    if (limit) {
-      results = results.slice(0, parseInt(limit));
+    if (req.query.category) {
+      const cat = req.query.category;
+      results = results.filter(i =>
+        typeof i.category === 'string' && i.category === cat
+      );
     }
 
-    res.json(results);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.max(parseInt(req.query.limit, 10) || 50, 1);
+    const start = (page - 1) * limit;
+    const pageItems = results.slice(start, start + limit);
+
+    res.json({ items: pageItems, total: results.length });
   } catch (err) {
     next(err);
   }
 });
 
 // GET /api/items/:id
-router.get('/:id', (req, res, next) => {
+// Returns the item with the given `id` or 404 if not found.
+router.get('/:id', async (req, res, next) => {
   try {
-    const data = readData();
-    const item = data.find(i => i.id === parseInt(req.params.id));
+    const data = await readData();
+    const id = parseInt(req.params.id, 10);
+    const item = (Array.isArray(data) ? data : []).find(i => i.id === id);
     if (!item) {
-      const err = new Error('Item not found');
-      err.status = 404;
-      throw err;
+      return res.status(404).json({ error: 'Item not found' });
     }
     res.json(item);
   } catch (err) {
@@ -49,15 +100,28 @@ router.get('/:id', (req, res, next) => {
 });
 
 // POST /api/items
-router.post('/', (req, res, next) => {
+// Validates payload; on success appends to file and returns 201 + new item.
+// On validation error returns 400 + { errors: [...] }.
+router.post('/', async (req, res, next) => {
   try {
-    // TODO: Validate payload (intentional omission)
-    const item = req.body;
-    const data = readData();
-    item.id = Date.now();
-    data.push(item);
-    fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
-    res.status(201).json(item);
+    const payload = req.body;
+    const errors = validateItemPayload(payload);
+    if (errors.length) {
+      return res.status(400).json({ errors });
+    }
+
+    const data = await readData();
+    const newItem = {
+      id: Date.now(),
+      name: payload.name.trim(),
+      category: payload.category.trim(),
+      price: payload.price
+    };
+
+    data.push(newItem);
+    await writeData(data);
+
+    res.status(201).json(newItem);
   } catch (err) {
     next(err);
   }
