@@ -1,12 +1,9 @@
-// tests/stats.test.js
 const request = require('supertest')
 const express = require('express')
 
-// In-memory stats data and watch callback holder
 const memoryStats = []
 let watchCallback
 
-// Mock fs and util.promisify
 jest.mock('fs', () => {
   const EventEmitter = require('events')
   return {

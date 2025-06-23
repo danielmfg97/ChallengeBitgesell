@@ -1,11 +1,8 @@
-// tests/items.test.js
 const request = require('supertest')
 const express = require('express')
 
-// 1) In-memory store for items
 const memoryData = []
 
-// 2) Mock fs.promises for the routes
 jest.mock('fs', () => ({
   promises: {
     readFile: jest.fn(() => Promise.resolve(JSON.stringify(memoryData))),
@@ -16,13 +13,11 @@ jest.mock('fs', () => ({
   }
 }))
 
-// 3) Load the router *after* mocking
 const itemsRouter = require('../routes/items')
 
 let app
 
 beforeEach(() => {
-  // initialize memoryData for each test
   memoryData.length = 0
   memoryData.push(
     { id: 1, name: 'foo', category: 'A', price: 10 },
@@ -31,7 +26,6 @@ beforeEach(() => {
     { id: 4, name: 'qux', category: 'C', price: 40 }
   )
 
-  // rebuild express app
   app = express()
   app.use(express.json())
   app.use('/api/items', itemsRouter)
